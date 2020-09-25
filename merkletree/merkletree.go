@@ -1,22 +1,17 @@
 package merkletree
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"hash"
 )
 
-// Data to be added in merkle tree must
-// have comarison and calculating hash functions
-type Data interface {
-	Equals(other Data) (bool, error)
-	Hash() ([]byte, error)
-}
-
 // MerkleTree ...
 type MerkleTree struct {
-	root   *node
-	data   []Data
-	hashfn func() hash.Hash
+	root        *node
+	data        []byte
+	segmentSize uint32
+	newHash     func() hash.Hash
 }
 
 type node struct {
@@ -25,20 +20,73 @@ type node struct {
 	hash  hash.Hash
 }
 
-// NewMerkleTree ...
-func NewMerkleTree(d []Data) (*MerkleTree, error) {
-	return NewCostumHasMerkleTree(d, sha256.New)
+// NewMerkleTree returns new merkle tree created by the data in the 'data'.
+// All leaves will we 'segmentSize' bytes except the last leaf,
+// which will not be padded out if there are not enough bytes remaining in the 'data'.
+func NewMerkleTree(data []byte, segmentSize uint32) (*MerkleTree, error) {
+	return NewMerkleTreeWithCostumHash(data, segmentSize, sha256.New)
 }
 
-// NewCostumHasMerkleTree ...
-func NewCostumHasMerkleTree(d []Data, hash func() hash.Hash) (*MerkleTree, error) {
+// NewMerkleTreeWithCostumHash ...
+func NewMerkleTreeWithCostumHash(data []byte, segmentSize uint32, hashfn func() hash.Hash) (*MerkleTree, error) {
 	mt := MerkleTree{
-		root:   nil,
-		data:   d,
-		hashfn: hash,
+		root:        nil,
+		data:        data,
+		segmentSize: segmentSize,
+		newHash:     hashfn,
 	}
 
+	segments := chopData(data, segmentSize)
+	mt.root = mt.buildTree(segments, uint32(0), uint32(len(data)))
 	return &mt, nil
+}
+
+// chop data in segmentSize pieces
+func chopData(data []byte, segmentSize uint32) [][]byte {
+	segments := [][]byte{}
+	dataLen := uint32(len(data))
+	for i := uint32(0); i < dataLen; i += segmentSize {
+		currSegmentSize := min(dataLen-i, segmentSize)
+		segment := make([]byte, currSegmentSize)
+		_ = copy(segment, data[i:i+currSegmentSize])
+		segments = append(segments, segment)
+	}
+	return segments
+}
+
+// BuildTree ...
+func (mt *MerkleTree) buildTree(segments [][]byte, start, end uint32) *node {
+	// base case, no more segments left
+	if len(segments) == 0 {
+		return nil
+	}
+
+	// leaf node
+	if start-end <= mt.segmentSize {
+		leaf := &node{
+			left:  nil,
+			right: nil,
+			hash:  mt.newHash(),
+		}
+
+		// crypto/hash.Hash.Write never returns error.
+		_, _ = leaf.hash.Write(segments[0])
+		segments = segments[1:]
+		return leaf
+	}
+
+	// intermediate node
+	mid := start + ((end - start) >> 1)
+	n := &node{
+		left:  mt.buildTree(segments, start, mid),
+		right: mt.buildTree(segments, mid, end),
+		hash:  mt.newHash(),
+	}
+
+	concat := append(n.left.hash.Sum(nil), n.right.hash.Sum(nil)...)
+	_, _ = n.hash.Write(concat)
+
+	return n
 }
 
 // GetRootHash ...
@@ -48,9 +96,39 @@ func (mt *MerkleTree) GetRootHash() []byte {
 
 // Validate entire trees' correctness
 func (mt *MerkleTree) Validate() (bool, error) {
-	return false, nil
+	nmt, err := NewMerkleTreeWithCostumHash(mt.data, mt.segmentSize, mt.newHash)
+	if err != nil {
+		return false, nil
+	}
+	return mt.Equals(nmt), nil
 }
 
 func (mt *MerkleTree) String() (string, error) {
 	return "", nil
+}
+
+// Equals ...
+func (mt *MerkleTree) Equals(other *MerkleTree) bool {
+	return mt.root.equals(other.root)
+}
+
+func (n *node) equals(o *node) bool {
+	if n == nil && o == nil {
+		return true
+	}
+	if o == nil || n == nil {
+		return false
+	}
+	if !bytes.Equal(n.hash.Sum(nil), n.hash.Sum(nil)) {
+		return false
+	}
+
+	return n.left.equals(o.left) && n.right.equals(o.right)
+}
+
+func min(a, b uint32) uint32 {
+	if a < b {
+		return a
+	}
+	return b
 }
