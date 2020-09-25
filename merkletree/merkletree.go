@@ -3,8 +3,11 @@ package merkletree
 import (
 	"bytes"
 	"crypto/sha256"
+	"fmt"
 	"hash"
 )
+
+// note: crypto/hash.Hash.Write never returns error.
 
 // MerkleTree ...
 type MerkleTree struct {
@@ -18,6 +21,13 @@ type node struct {
 	left  *node
 	right *node
 	hash  hash.Hash
+}
+
+func min(a, b uint32) uint32 {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // NewMerkleTree returns new merkle tree created by the data in the 'data'.
@@ -62,21 +72,19 @@ func (mt *MerkleTree) buildTree(segments [][]byte, start, end uint32) *node {
 	}
 
 	// leaf node
-	if start-end <= mt.segmentSize {
+	if end-start <= mt.segmentSize {
 		leaf := &node{
 			left:  nil,
 			right: nil,
 			hash:  mt.newHash(),
 		}
-
-		// crypto/hash.Hash.Write never returns error.
 		_, _ = leaf.hash.Write(segments[0])
 		segments = segments[1:]
 		return leaf
 	}
 
 	// intermediate node
-	mid := start + ((end - start) >> 1)
+	mid := start + ((end - start) / 2)
 	n := &node{
 		left:  mt.buildTree(segments, start, mid),
 		right: mt.buildTree(segments, mid, end),
@@ -103,16 +111,18 @@ func (mt *MerkleTree) Validate() (bool, error) {
 	return mt.Equals(nmt), nil
 }
 
-func (mt *MerkleTree) String() (string, error) {
-	return "", nil
+func (mt *MerkleTree) String() string {
+	str := fmt.Sprintf("MerkleTree:\ndata:%v\nsegmentSize:%v\ntree:\n", mt.data, mt.segmentSize)
+	str += subTreeToString(mt.root, "")
+	return str
 }
 
 // Equals ...
 func (mt *MerkleTree) Equals(other *MerkleTree) bool {
-	return mt.root.equals(other.root)
+	return mt.root.subTreeEquals(other.root)
 }
 
-func (n *node) equals(o *node) bool {
+func (n *node) subTreeEquals(o *node) bool {
 	if n == nil && o == nil {
 		return true
 	}
@@ -123,12 +133,14 @@ func (n *node) equals(o *node) bool {
 		return false
 	}
 
-	return n.left.equals(o.left) && n.right.equals(o.right)
+	return n.left.subTreeEquals(o.left) && n.right.subTreeEquals(o.right)
 }
 
-func min(a, b uint32) uint32 {
-	if a < b {
-		return a
+func subTreeToString(n *node, prepad string) string {
+	if n == nil {
+		return ""
 	}
-	return b
+	return prepad + fmt.Sprintf("hash:%v", n.hash.Sum(nil)) +
+		subTreeToString(n.left, prepad+"\t") +
+		subTreeToString(n.right, prepad+"\t")
 }
