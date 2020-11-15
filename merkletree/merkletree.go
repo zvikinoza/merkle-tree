@@ -129,10 +129,10 @@ func (n *node) subTreeEquals(o *node) bool {
 	if o == nil || n == nil {
 		return false
 	}
-	if !bytes.Equal(n.hash.Sum(nil), n.hash.Sum(nil)) {
-		return false
+	if bytes.Equal(n.hash.Sum(nil), n.hash.Sum(nil)) {
+		return true
 	}
-
+	// current nodes may be corrupted so compare recursively
 	return n.left.subTreeEquals(o.left) && n.right.subTreeEquals(o.right)
 }
 
